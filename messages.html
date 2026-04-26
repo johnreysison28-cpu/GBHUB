@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Messages — GameBarterHub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/navbar.css">
+  <link rel="stylesheet" href="css/notification.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/messages.css">
+  <!-- Firebase SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <!-- Firebase Init -->
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyD5-g1bjXfgd1w9boHbfLX8EMnt6tr9yuM",
+      authDomain: "gbhub-25a16.firebaseapp.com",
+      projectId: "gbhub-25a16",
+      storageBucket: "gbhub-25a16.firebasestorage.app",
+      messagingSenderId: "1031854442872",
+      appId: "1:1031854442872:web:208bc4663cace89f43608d",
+      measurementId: "G-XV7WMV0Q82"
+    };
+    if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+  </script>
+</head>
+<body>
+
+<!-- Navbar injected by navbar-template.js -->
+
+<div class="messages-layout">
+  <!-- Sidebar -->
+  <div class="msg-sidebar">
+    <div class="msg-sidebar-header">💬 Messages</div>
+    <div class="msg-search">
+      <input class="form-input" placeholder="Search conversations..."
+        style="border-radius:20px;font-size:0.82rem;padding:8px 14px"
+        oninput="filterContacts(this.value)">
+    </div>
+    <div class="msg-list" id="msgList"></div>
+  </div>
+
+  <!-- Chat Area -->
+  <div class="chat-area" id="chatArea">
+    <div class="chat-empty">
+      <div class="chat-empty-icon">💬</div>
+      <p>Select a conversation to start chatting</p>
+    </div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/navbar.js"></script>
+<script src="js/notification.js"></script>
+<script src="js/navbar-template.js"></script>
+<script>
+  let currentConvoId = null;
+  let _pollTimer     = null;
+
+  async function initMessages() {
+    await restoreSession();
+    if (!state.currentUser) { window.location.href = 'login.html'; return; }
+    await renderContacts();
+
+    // Auto-open convo if coming from Contact button
+    const openConvoId = sessionStorage.getItem('gbh_openConvo');
+    if (openConvoId) {
+      sessionStorage.removeItem('gbh_openConvo');
+      openChat(openConvoId);
+    }
+
+    // Poll for new messages every 3s
+    _pollTimer = setInterval(async () => {
+      await renderContacts(true);
+      if (currentConvoId) refreshCurrentChat();
+    }, 3000);
+  }
+
+  async function renderContacts(silent = false) {
+    const filter = document.getElementById('msgSearch')?.value || '';
+    try {
+      const convos = await apiGet('/messages');
+      const filtered = filter
+        ? convos.filter(c => c.partner.name.toLowerCase().includes(filter.toLowerCase()))
+        : convos;
+
+      document.getElementById('msgList').innerHTML = filtered.length
+        ? filtered.map(c => `
+          <div class="msg-contact ${currentConvoId === c.id ? 'active' : ''}" onclick="openChat('${c.id}')">
+            <div class="mini-avatar" style="width:38px;height:38px;flex-shrink:0">
+              ${getAvatarEl(c.partner.name, c.partner.avatar)}
+            </div>
+            <div class="msg-contact-info">
+              <div class="msg-contact-name">${c.partner.name}</div>
+              <div class="msg-contact-preview">${c.lastMsg || 'No messages yet'}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+              <span class="msg-contact-time">${formatTime(c.lastAt)}</span>
+              ${c.unread ? `<span class="msg-unread">${c.unread}</span>` : ''}
+            </div>
+          </div>`).join('')
+        : `<div class="empty-state"><div class="empty-state-icon">💬</div><p>No conversations yet.</p></div>`;
+    } catch (_) {}
+  }
+
+  function filterContacts(q) { renderContacts(); }
+
+  async function openChat(convoId) {
+    currentConvoId = convoId; // keep as string
+
+    try {
+      const convos  = await apiGet('/messages');
+      const convo   = convos.find(c => c.id === convoId);
+      if (!convo) return;
+      const partner = convo.partner;
+
+      const msgs = await apiGet('/messages/' + convoId);
+
+      document.getElementById('chatArea').innerHTML = `
+        <div class="chat-header">
+          <div class="mini-avatar" style="width:36px;height:36px">${getAvatarEl(partner.name, partner.avatar)}</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:0.9rem">${partner.name}</div>
+            <div style="font-size:0.72rem;color:var(--accent-green)">● Active</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button onclick="startVoiceCall('${partner.name}')" title="Voice Call" style="width:38px;height:38px;border-radius:50%;border:1px solid rgba(0,229,255,0.35);background:rgba(0,229,255,0.08);color:var(--accent-cyan);cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;">📞</button>
+            <button onclick="startVideoCall('${partner.name}')" title="Video Call" style="width:38px;height:38px;border-radius:50%;border:1px solid rgba(57,255,20,0.35);background:rgba(57,255,20,0.08);color:var(--accent-green);cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;">📹</button>
+          </div>
+        </div>
+        <div class="chat-messages" id="chatMsgs">
+          ${msgs.map(m => {
+            const isMine = m.sender_id === state.currentUser.id;
+            return `<div class="chat-msg ${isMine ? 'sent' : 'received'}">
+              ${!isMine ? `<div class="mini-avatar" style="flex-shrink:0">${getAvatarEl(m.senderName, m.senderAvatar)}</div>` : ''}
+              <div><div class="chat-bubble">${m.body}</div><div class="chat-msg-time">${formatTime(m.created_at)}</div></div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="chat-input-area">
+          <textarea class="chat-input" id="chatInputEl" placeholder="Type a message..." rows="1"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}">
+          </textarea>
+          <button class="chat-send" onclick="sendMsg()">➤</button>
+        </div>`;
+
+      scrollBottom();
+      renderContacts();
+    } catch (e) {
+      showToast('Could not open chat.', 'error');
+    }
+  }
+
+  async function refreshCurrentChat() {
+    if (!currentConvoId) return;
+    try {
+      const msgs  = await apiGet('/messages/' + currentConvoId);
+      const msgsEl = document.getElementById('chatMsgs');
+      if (!msgsEl) return;
+      const prev = msgsEl.querySelectorAll('.chat-msg').length;
+      if (msgs.length !== prev) {
+        // Re-render messages only
+        const convos  = await apiGet('/messages');
+        const convo   = convos.find(c => c.id === currentConvoId);        if (!convo) return;
+        msgsEl.innerHTML = msgs.map(m => {
+          const isMine = m.sender_id === state.currentUser.id;
+          return `<div class="chat-msg ${isMine ? 'sent' : 'received'}">
+            ${!isMine ? `<div class="mini-avatar" style="flex-shrink:0">${getAvatarEl(m.senderName, m.senderAvatar)}</div>` : ''}
+            <div><div class="chat-bubble">${m.body}</div><div class="chat-msg-time">${formatTime(m.created_at)}</div></div>
+          </div>`;
+        }).join('');
+        scrollBottom();
+      }
+    } catch (_) {}
+  }
+
+  async function sendMsg() {
+    const inputEl = document.getElementById('chatInputEl');
+    const text    = inputEl?.value.trim();
+    if (!text || !currentConvoId) return;
+    inputEl.value = '';
+
+    try {
+      await apiPost('/messages/' + currentConvoId, { body: text });
+      await refreshCurrentChat();
+      renderContacts();
+      scrollBottom();
+    } catch (e) {
+      showToast(e.message || 'Could not send message.', 'error');
+    }
+  }
+
+  function scrollBottom() {
+    const el = document.getElementById('chatMsgs');
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  function startVoiceCall(contact) { showCallModal(contact, false); }
+  function startVideoCall(contact) { showCallModal(contact, true); }
+
+  function showCallModal(contact, isVideo) {
+    const existing = document.getElementById('callModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'callModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(5,5,20,0.92);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const callType = isVideo ? 'Video Call' : 'Voice Call';
+    const callIcon = isVideo ? '📹' : '📞';
+    modal.innerHTML = `
+      <div style="background:linear-gradient(135deg,#0d1117,#0a1628);border:1px solid rgba(0,229,255,0.2);border-radius:24px;padding:48px 40px;text-align:center;min-width:280px;max-width:340px;width:90%;box-shadow:0 0 60px rgba(0,229,255,0.1);">
+        <div style="width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,rgba(0,229,255,0.2),rgba(57,255,20,0.1));border:2px solid rgba(0,229,255,0.4);display:flex;align-items:center;justify-content:center;font-size:2rem;margin:0 auto 16px;">${getAvatarEl(contact)}</div>
+        <div style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700;margin-bottom:4px;color:#fff">${contact}</div>
+        <div style="font-size:0.82rem;color:var(--accent-cyan);margin-bottom:8px">${callIcon} ${callType}</div>
+        <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:32px" id="callStatus">Calling...</div>
+        <button onclick="endCall()" style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#ff3b3b,#cc0000);border:none;color:#fff;font-size:1.6rem;cursor:pointer;">📵</button>
+      </div>`;
+    document.body.appendChild(modal);
+    setTimeout(() => { const s=document.getElementById('callStatus'); if(s) s.textContent='Ringing...'; }, 800);
+    setTimeout(() => { const s=document.getElementById('callStatus'); if(s){s.textContent='Connected ● 00:00';s.style.color='var(--accent-green)';startCallTimer();} }, 2500);
+  }
+
+  let _callTimer=null, _callSeconds=0;
+  function startCallTimer() {
+    _callSeconds=0;
+    _callTimer=setInterval(()=>{
+      _callSeconds++;
+      const m=String(Math.floor(_callSeconds/60)).padStart(2,'0');
+      const s=String(_callSeconds%60).padStart(2,'0');
+      const el=document.getElementById('callStatus');
+      if(el) el.textContent=`Connected ● ${m}:${s}`;
+    },1000);
+  }
+  function endCall() {
+    clearInterval(_callTimer);
+    const modal=document.getElementById('callModal');
+    if(modal){modal.style.opacity='0';modal.style.transition='opacity 0.2s';setTimeout(()=>modal.remove(),200);}
+  }
+
+  document.addEventListener('DOMContentLoaded', () => initMessages());
+</script>
+</body>
+</html>
